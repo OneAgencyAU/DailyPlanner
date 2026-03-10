@@ -1,4 +1,4 @@
-import { createDAVClient } from 'tsdav';
+import { createDAVClient, DAVNamespaceShort } from 'tsdav';
 
 const ICLOUD_SERVER = 'https://caldav.icloud.com';
 
@@ -110,19 +110,36 @@ export async function fetchAllReminders() {
 
   for (const cal of calsToSearch) {
     try {
-      const objects = await client.fetchCalendarObjects({
-        calendar: cal,
+      // Use calendarQuery with VTODO comp-filter (fetchCalendarObjects defaults to VEVENT)
+      const responses = await client.calendarQuery({
+        url: cal.url,
+        props: {
+          [`${DAVNamespaceShort.DAV}:getetag`]: {},
+          [`${DAVNamespaceShort.CALDAV}:calendar-data`]: {},
+        },
+        filters: {
+          [`${DAVNamespaceShort.CALDAV}:comp-filter`]: {
+            _attributes: { name: 'VCALENDAR' },
+            [`${DAVNamespaceShort.CALDAV}:comp-filter`]: {
+              _attributes: { name: 'VTODO' },
+            },
+          },
+        },
+        depth: '1',
       });
 
-      for (const obj of objects) {
-        if (!obj.data || !obj.data.includes('VTODO')) continue;
+      for (const resp of responses) {
+        const data = resp.props?.calendarData?._cdata || resp.props?.calendarData;
+        const etag = resp.props?.getetag;
+        const url = resp.href;
+        if (!data || !data.includes('VTODO')) continue;
 
         const calName = cal.displayName || 'Reminders';
-        const parsed = parseVTodo(obj.data, calName);
+        const parsed = parseVTodo(data, calName);
         if (parsed) {
-          parsed.etag = obj.etag;
-          parsed.rawVcal = obj.data;
-          parsed.url = obj.url;
+          parsed.etag = etag;
+          parsed.rawVcal = data;
+          parsed.url = url;
           allReminders.push(parsed);
         }
       }

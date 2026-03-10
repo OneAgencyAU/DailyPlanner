@@ -278,30 +278,49 @@ app.get('/api/reminders/test', async (req, res) => {
 
   const calsToSearch = todoCalendars.length > 0 ? todoCalendars : calendars;
 
-  // Step 4: Fetch objects from each calendar
+  // Step 4: Fetch VTODO objects using calendarQuery with VTODO comp-filter
+  const { DAVNamespaceShort } = await import('tsdav');
   const allObjects = [];
   for (const cal of calsToSearch) {
     try {
-      const objects = await client.fetchCalendarObjects({ calendar: cal });
-      const vtodos = objects.filter((o) => o.data?.includes('VTODO'));
+      const responses = await client.calendarQuery({
+        url: cal.url,
+        props: {
+          [`${DAVNamespaceShort.DAV}:getetag`]: {},
+          [`${DAVNamespaceShort.CALDAV}:calendar-data`]: {},
+        },
+        filters: {
+          [`${DAVNamespaceShort.CALDAV}:comp-filter`]: {
+            _attributes: { name: 'VCALENDAR' },
+            [`${DAVNamespaceShort.CALDAV}:comp-filter`]: {
+              _attributes: { name: 'VTODO' },
+            },
+          },
+        },
+        depth: '1',
+      });
+      const vtodos = responses.filter((r) => {
+        const data = r.props?.calendarData?._cdata || r.props?.calendarData;
+        return data?.includes('VTODO');
+      });
       push(`fetchObjects:${cal.displayName || cal.url}`, {
         ok: true,
-        totalObjects: objects.length,
+        totalResponses: responses.length,
         vtodoCount: vtodos.length,
-        sampleData: vtodos.slice(0, 2).map((o) => ({
-          url: o.url,
-          etag: o.etag,
-          dataPreview: o.data?.slice(0, 500),
+        sampleData: vtodos.slice(0, 2).map((r) => ({
+          href: r.href,
+          etag: r.props?.getetag,
+          dataPreview: (r.props?.calendarData?._cdata || r.props?.calendarData)?.slice(0, 500),
         })),
-        nonVtodoSample: objects.length > 0 && vtodos.length === 0
-          ? objects.slice(0, 1).map((o) => o.data?.slice(0, 300))
-          : undefined,
+        rawResponseKeys: responses.length > 0 ? Object.keys(responses[0]) : [],
+        rawPropsKeys: responses.length > 0 && responses[0].props ? Object.keys(responses[0].props) : [],
       });
       allObjects.push(...vtodos);
     } catch (err) {
       push(`fetchObjects:${cal.displayName || cal.url}`, {
         ok: false,
         error: err.message,
+        stack: err.stack?.split('\n').slice(0, 5),
       });
     }
   }
