@@ -9,6 +9,9 @@
     "build": "cd client && npm install && npm run build && cd ../server && npm install",
     "start": "cd server && npm run migrate && npm run start"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
     "concurrently": "^8.2.0"
   }
