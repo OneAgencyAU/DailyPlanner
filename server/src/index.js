@@ -300,8 +300,9 @@ app.get('/api/reminders/test', async (req, res) => {
         depth: '1',
       });
       const vtodos = responses.filter((r) => {
-        const data = r.props?.calendarData?._cdata || r.props?.calendarData;
-        return data?.includes('VTODO');
+        const raw = r.props?.calendarData?._cdata || r.props?.calendarData;
+        const data = typeof raw === 'string' ? raw : String(raw ?? '');
+        return data.includes('VTODO');
       });
       push(`fetchObjects:${cal.displayName || cal.url}`, {
         ok: true,
@@ -310,7 +311,7 @@ app.get('/api/reminders/test', async (req, res) => {
         sampleData: vtodos.slice(0, 2).map((r) => ({
           href: r.href,
           etag: r.props?.getetag,
-          dataPreview: (r.props?.calendarData?._cdata || r.props?.calendarData)?.slice(0, 500),
+          dataPreview: String(r.props?.calendarData?._cdata || r.props?.calendarData || '').slice(0, 500),
         })),
         rawResponseKeys: responses.length > 0 ? Object.keys(responses[0]) : [],
         rawPropsKeys: responses.length > 0 && responses[0].props ? Object.keys(responses[0].props) : [],
