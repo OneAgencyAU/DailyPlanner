@@ -1,7 +1,10 @@
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import pool from './db.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -55,6 +58,13 @@ app.put('/api/notes/:date', async (req, res) => {
     console.error('Error saving note:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// Serve client build in production
+const clientDist = path.resolve(__dirname, '../../client/dist');
+app.use(express.static(clientDist));
+app.get('*', (req, res) => {
+  res.sendFile(path.join(clientDist, 'index.html'));
 });
 
 app.listen(PORT, () => {
