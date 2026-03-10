@@ -210,6 +210,109 @@ app.post('/api/reminders', async (req, res) => {
   }
 });
 
+// Diagnostic endpoint — test CalDAV connection step by step
+app.get('/api/reminders/test', async (req, res) => {
+  const steps = [];
+  const push = (step, data) => steps.push({ step, ...data });
+
+  const username = process.env.APPLE_CALDAV_USERNAME;
+  const password = process.env.APPLE_CALDAV_APP_PASSWORD;
+
+  push('credentials', {
+    username: username ? `${username.slice(0, 3)}***${username.slice(-4)}` : null,
+    passwordSet: !!password,
+    passwordLength: password?.length || 0,
+  });
+
+  if (!username || !password) {
+    return res.json({ ok: false, steps, error: 'Credentials not set' });
+  }
+
+  // Step 1: Create client
+  let client;
+  try {
+    const { createDAVClient } = await import('tsdav');
+    client = await createDAVClient({
+      serverUrl: 'https://caldav.icloud.com',
+      credentials: { username, password },
+      authMethod: 'Basic',
+      defaultAccountType: 'caldav',
+    });
+    push('createClient', { ok: true });
+  } catch (err) {
+    push('createClient', { ok: false, error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
+    return res.json({ ok: false, steps });
+  }
+
+  // Step 2: Fetch calendars
+  let calendars;
+  try {
+    calendars = await client.fetchCalendars();
+    push('fetchCalendars', {
+      ok: true,
+      count: calendars.length,
+      calendars: calendars.map((c) => ({
+        displayName: c.displayName,
+        url: c.url,
+        components: c.components,
+        resourcetype: c.resourcetype,
+        ctag: c.ctag,
+      })),
+    });
+  } catch (err) {
+    push('fetchCalendars', { ok: false, error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
+    return res.json({ ok: false, steps });
+  }
+
+  // Step 3: Identify VTODO calendars
+  const todoCalendars = calendars.filter(
+    (cal) =>
+      cal.components?.includes('VTODO') ||
+      cal.url?.includes('/tasks/') ||
+      !cal.components?.includes('VEVENT')
+  );
+  push('filterTodoCalendars', {
+    count: todoCalendars.length,
+    names: todoCalendars.map((c) => c.displayName),
+  });
+
+  const calsToSearch = todoCalendars.length > 0 ? todoCalendars : calendars;
+
+  // Step 4: Fetch objects from each calendar
+  const allObjects = [];
+  for (const cal of calsToSearch) {
+    try {
+      const objects = await client.fetchCalendarObjects({ calendar: cal });
+      const vtodos = objects.filter((o) => o.data?.includes('VTODO'));
+      push(`fetchObjects:${cal.displayName || cal.url}`, {
+        ok: true,
+        totalObjects: objects.length,
+        vtodoCount: vtodos.length,
+        sampleData: vtodos.slice(0, 2).map((o) => ({
+          url: o.url,
+          etag: o.etag,
+          dataPreview: o.data?.slice(0, 500),
+        })),
+        nonVtodoSample: objects.length > 0 && vtodos.length === 0
+          ? objects.slice(0, 1).map((o) => o.data?.slice(0, 300))
+          : undefined,
+      });
+      allObjects.push(...vtodos);
+    } catch (err) {
+      push(`fetchObjects:${cal.displayName || cal.url}`, {
+        ok: false,
+        error: err.message,
+      });
+    }
+  }
+
+  push('summary', {
+    totalVtodos: allObjects.length,
+  });
+
+  res.json({ ok: allObjects.length > 0, steps });
+});
+
 // Serve client build in production
 const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
