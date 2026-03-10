@@ -14,6 +14,8 @@
   --color-accent-violet: #7c6ff7;
   --color-accent-gradient-start: #4f8ef7;
   --color-accent-gradient-end: #7c6ff7;
+  --color-accent-orange: #f56536;
+  --color-accent-orange-end: #ff8c42;
 }
 
 * {
@@ -36,6 +38,18 @@ body {
 
 .accent-gradient-text {
   background: linear-gradient(135deg, var(--color-accent-gradient-start), var(--color-accent-gradient-end));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Today badge accent */
+.today-badge {
+  background: linear-gradient(135deg, var(--color-accent-orange), var(--color-accent-orange-end));
+}
+
+.today-gradient-text {
+  background: linear-gradient(135deg, var(--color-accent-orange), var(--color-accent-orange-end));
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;

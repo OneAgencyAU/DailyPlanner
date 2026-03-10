@@ -1,0 +1,273 @@
+import { createDAVClient } from 'tsdav';
+
+const ICLOUD_SERVER = 'https://caldav.icloud.com';
+
+/**
+ * Create an authenticated CalDAV client for iCloud.
+ */
+async function getClient() {
+  const username = process.env.APPLE_CALDAV_USERNAME;
+  const password = process.env.APPLE_CALDAV_APP_PASSWORD;
+
+  if (!username || !password) {
+    throw new Error('APPLE_CALDAV_USERNAME and APPLE_CALDAV_APP_PASSWORD must be set');
+  }
+
+  const client = await createDAVClient({
+    serverUrl: ICLOUD_SERVER,
+    credentials: { username, password },
+    authMethod: 'Basic',
+    defaultAccountType: 'caldav',
+  });
+
+  return client;
+}
+
+/**
+ * Parse a VTODO string to extract reminder fields.
+ */
+function parseVTodo(vcalData, calendarName) {
+  const get = (key) => {
+    const regex = new RegExp(`^${key}[;:](.*)$`, 'm');
+    const match = vcalData.match(regex);
+    if (!match) return null;
+    // Handle parameters like DUE;VALUE=DATE:20260310
+    let val = match[1];
+    if (val.includes(':')) {
+      val = val.split(':').pop();
+    }
+    return val.trim();
+  };
+
+  const uid = get('UID');
+  if (!uid) return null;
+
+  const summary = get('SUMMARY') || '(No title)';
+  const status = get('STATUS');
+  const completed = status === 'COMPLETED';
+  const priority = parseInt(get('PRIORITY') || '0', 10);
+
+  // Parse DUE date — could be DATE or DATE-TIME
+  let dueDate = null;
+  const dueRaw = get('DUE');
+  if (dueRaw) {
+    // Format: 20260310 or 20260310T120000Z
+    const dateStr = dueRaw.replace(/[TZ]/g, '').slice(0, 8);
+    if (dateStr.length === 8) {
+      dueDate = `${dateStr.slice(0, 4)}-${dateStr.slice(4, 6)}-${dateStr.slice(6, 8)}`;
+    }
+  }
+
+  // Parse COMPLETED timestamp
+  let completedAt = null;
+  const completedRaw = get('COMPLETED');
+  if (completedRaw) {
+    try {
+      const yr = completedRaw.slice(0, 4);
+      const mo = completedRaw.slice(4, 6);
+      const dy = completedRaw.slice(6, 8);
+      const hr = completedRaw.slice(9, 11) || '00';
+      const mi = completedRaw.slice(11, 13) || '00';
+      const se = completedRaw.slice(13, 15) || '00';
+      completedAt = new Date(`${yr}-${mo}-${dy}T${hr}:${mi}:${se}Z`);
+    } catch {
+      // ignore parse errors
+    }
+  }
+
+  return {
+    uid,
+    title: summary,
+    dueDate,
+    completed,
+    completedAt,
+    priority,
+    calendarName,
+  };
+}
+
+/**
+ * Fetch all reminders (VTODOs) from iCloud across all calendars.
+ * Returns parsed reminder objects.
+ */
+export async function fetchAllReminders() {
+  const client = await getClient();
+
+  // Fetch calendars that support VTODO
+  const calendars = await client.fetchCalendars();
+  const todoCalendars = calendars.filter(
+    (cal) =>
+      cal.components?.includes('VTODO') ||
+      cal.url?.includes('/tasks/') ||
+      // iCloud often puts reminders under specific paths
+      !cal.components?.includes('VEVENT')
+  );
+
+  // If no VTODO-specific calendars found, try all
+  const calsToSearch = todoCalendars.length > 0 ? todoCalendars : calendars;
+
+  const allReminders = [];
+
+  for (const cal of calsToSearch) {
+    try {
+      const objects = await client.fetchCalendarObjects({
+        calendar: cal,
+      });
+
+      for (const obj of objects) {
+        if (!obj.data || !obj.data.includes('VTODO')) continue;
+
+        const calName = cal.displayName || 'Reminders';
+        const parsed = parseVTodo(obj.data, calName);
+        if (parsed) {
+          parsed.etag = obj.etag;
+          parsed.rawVcal = obj.data;
+          parsed.url = obj.url;
+          allReminders.push(parsed);
+        }
+      }
+    } catch (err) {
+      console.warn(`Skipping calendar ${cal.displayName}: ${err.message}`);
+    }
+  }
+
+  return allReminders;
+}
+
+/**
+ * Mark a reminder as completed on iCloud via CalDAV.
+ */
+export async function completeReminderOnServer(url, etag, rawVcal) {
+  const client = await getClient();
+
+  const now = new Date();
+  const timestamp =
+    now.getUTCFullYear().toString() +
+    String(now.getUTCMonth() + 1).padStart(2, '0') +
+    String(now.getUTCDate()).padStart(2, '0') +
+    'T' +
+    String(now.getUTCHours()).padStart(2, '0') +
+    String(now.getUTCMinutes()).padStart(2, '0') +
+    String(now.getUTCSeconds()).padStart(2, '0') +
+    'Z';
+
+  let updatedVcal = rawVcal;
+
+  // Add or update STATUS
+  if (updatedVcal.includes('STATUS:')) {
+    updatedVcal = updatedVcal.replace(/STATUS:[^\r\n]*/g, 'STATUS:COMPLETED');
+  } else {
+    updatedVcal = updatedVcal.replace('END:VTODO', `STATUS:COMPLETED\r\nEND:VTODO`);
+  }
+
+  // Add COMPLETED timestamp
+  if (updatedVcal.includes('COMPLETED:')) {
+    updatedVcal = updatedVcal.replace(/COMPLETED:[^\r\n]*/g, `COMPLETED:${timestamp}`);
+  } else {
+    updatedVcal = updatedVcal.replace('END:VTODO', `COMPLETED:${timestamp}\r\nEND:VTODO`);
+  }
+
+  // Add PERCENT-COMPLETE
+  if (updatedVcal.includes('PERCENT-COMPLETE:')) {
+    updatedVcal = updatedVcal.replace(/PERCENT-COMPLETE:[^\r\n]*/g, 'PERCENT-COMPLETE:100');
+  } else {
+    updatedVcal = updatedVcal.replace('END:VTODO', `PERCENT-COMPLETE:100\r\nEND:VTODO`);
+  }
+
+  await client.updateCalendarObject({
+    calendarObject: {
+      url,
+      data: updatedVcal,
+      etag,
+    },
+  });
+
+  return updatedVcal;
+}
+
+/**
+ * Mark a reminder as incomplete on iCloud via CalDAV.
+ */
+export async function uncompleteReminderOnServer(url, etag, rawVcal) {
+  const client = await getClient();
+
+  let updatedVcal = rawVcal;
+
+  // Remove STATUS:COMPLETED
+  updatedVcal = updatedVcal.replace(/STATUS:COMPLETED\r?\n?/g, '');
+  // Remove COMPLETED timestamp
+  updatedVcal = updatedVcal.replace(/COMPLETED:[^\r\n]*\r?\n?/g, '');
+  // Remove PERCENT-COMPLETE
+  updatedVcal = updatedVcal.replace(/PERCENT-COMPLETE:[^\r\n]*\r?\n?/g, '');
+
+  // Set STATUS to NEEDS-ACTION
+  if (updatedVcal.includes('STATUS:')) {
+    updatedVcal = updatedVcal.replace(/STATUS:[^\r\n]*/g, 'STATUS:NEEDS-ACTION');
+  } else {
+    updatedVcal = updatedVcal.replace('END:VTODO', `STATUS:NEEDS-ACTION\r\nEND:VTODO`);
+  }
+
+  await client.updateCalendarObject({
+    calendarObject: {
+      url,
+      data: updatedVcal,
+      etag,
+    },
+  });
+
+  return updatedVcal;
+}
+
+/**
+ * Create a new reminder (VTODO) on iCloud via CalDAV.
+ */
+export async function createReminderOnServer(title, dueDate) {
+  const client = await getClient();
+
+  const calendars = await client.fetchCalendars();
+  const todoCal = calendars.find(
+    (cal) =>
+      cal.components?.includes('VTODO') ||
+      !cal.components?.includes('VEVENT')
+  );
+
+  if (!todoCal) {
+    throw new Error('No reminders calendar found on iCloud');
+  }
+
+  const uid = crypto.randomUUID();
+
+  let dueLine = '';
+  if (dueDate) {
+    const clean = dueDate.replace(/-/g, '');
+    dueLine = `DUE;VALUE=DATE:${clean}\r\n`;
+  }
+
+  const vcalData = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//OneAgency//DailyPlanner//EN',
+    'BEGIN:VTODO',
+    `UID:${uid}`,
+    `SUMMARY:${title}`,
+    dueLine ? dueLine.trim() : null,
+    'STATUS:NEEDS-ACTION',
+    'END:VTODO',
+    'END:VCALENDAR',
+  ]
+    .filter(Boolean)
+    .join('\r\n');
+
+  const response = await client.createCalendarObject({
+    calendar: todoCal,
+    filename: `${uid}.ics`,
+    iCalString: vcalData,
+  });
+
+  return {
+    uid,
+    rawVcal: vcalData,
+    url: `${todoCal.url}${uid}.ics`,
+    etag: response?.headers?.get?.('etag') || null,
+  };
+}

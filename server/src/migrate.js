@@ -23,6 +23,19 @@ const migrations = [
     value TEXT,
     updated_at TIMESTAMP DEFAULT NOW()
   )`,
+  `CREATE TABLE IF NOT EXISTS reminders (
+    uid TEXT PRIMARY KEY,
+    etag TEXT,
+    calendar_name TEXT,
+    title TEXT NOT NULL,
+    due_date DATE,
+    completed BOOLEAN DEFAULT FALSE,
+    completed_at TIMESTAMP,
+    priority INTEGER DEFAULT 0,
+    raw_vcal TEXT,
+    url TEXT,
+    synced_at TIMESTAMP DEFAULT NOW()
+  )`,
 ];
 
 async function migrate() {

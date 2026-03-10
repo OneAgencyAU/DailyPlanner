@@ -1,9 +1,9 @@
 export const DAY_THEMES = [
-  { day: 'Monday', emoji: '\u{1F9E0}', theme: 'AI Research & News', focus: 'Read, learn, stay current on AI' },
-  { day: 'Tuesday', emoji: '\u{1F6E0}\uFE0F', theme: 'Development', focus: 'Build client and internal projects' },
-  { day: 'Wednesday', emoji: '\u{1F6E0}\uFE0F', theme: 'Development', focus: 'Build client and internal projects' },
-  { day: 'Thursday', emoji: '\u{1F4E8}', theme: 'Outreach & Sales', focus: 'Find clients, follow up, send proposals' },
-  { day: 'Friday', emoji: '\u{1F4CA}', theme: 'Market Research & Business Planning', focus: 'Strategy, research, planning ONE AGENCY' },
+  { day: 'Monday', emoji: '\u{1F9E0}', theme: 'AI Research & News', focus: 'Read, learn, stay current on AI', color: { bg: 'rgba(99,179,237,0.12)', border: 'rgba(99,179,237,0.25)', text: '#63b3ed' } },
+  { day: 'Tuesday', emoji: '\u{1F6E0}\uFE0F', theme: 'Development', focus: 'Build client and internal projects', color: { bg: 'rgba(72,187,120,0.12)', border: 'rgba(72,187,120,0.25)', text: '#48bb78' } },
+  { day: 'Wednesday', emoji: '\u{1F6E0}\uFE0F', theme: 'Development', focus: 'Build client and internal projects', color: { bg: 'rgba(72,187,120,0.12)', border: 'rgba(72,187,120,0.25)', text: '#48bb78' } },
+  { day: 'Thursday', emoji: '\u{1F4E8}', theme: 'Outreach & Sales', focus: 'Find clients, follow up, send proposals', color: { bg: 'rgba(237,187,72,0.12)', border: 'rgba(237,187,72,0.25)', text: '#edbb48' } },
+  { day: 'Friday', emoji: '\u{1F4CA}', theme: 'Market Research & Business Planning', focus: 'Strategy, research, planning ONE AGENCY', color: { bg: 'rgba(183,121,237,0.12)', border: 'rgba(183,121,237,0.25)', text: '#b779ed' } },
 ];
 
 /**

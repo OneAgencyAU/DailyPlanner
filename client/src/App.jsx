@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import TopBar from './components/TopBar';
 import DayColumn from './components/DayColumn';
 import { DAY_THEMES, getWeekDates, formatDate, isSameDay } from './utils/days';
-import { fetchNotes, saveNote } from './utils/api';
+import { fetchNotes, saveNote, fetchReminders, syncReminders, toggleReminder, createReminder, fetchSyncStatus } from './utils/api';
 
 export default function App() {
   const today = new Date();
   const weekDates = getWeekDates(today);
+  const todayKey = formatDate(today);
 
   const [expandedIndex, setExpandedIndex] = useState(() => {
     const todayIdx = weekDates.findIndex((d) => isSameDay(d, today));
@@ -14,15 +15,34 @@ export default function App() {
   });
 
   const [notes, setNotes] = useState({});
+  const [reminders, setReminders] = useState([]);
+  const [syncing, setSyncing] = useState(false);
+  const [lastSynced, setLastSynced] = useState(null);
+  const [syncConfigured, setSyncConfigured] = useState(false);
   const debounceTimers = useRef({});
 
-  // Fetch notes for the current week
+  const start = formatDate(weekDates[0]);
+  const end = formatDate(weekDates[4]);
+
+  // Fetch notes on mount
   useEffect(() => {
-    const start = formatDate(weekDates[0]);
-    const end = formatDate(weekDates[4]);
     fetchNotes(start, end)
       .then(setNotes)
       .catch((err) => console.error('Failed to load notes:', err));
+  }, []);
+
+  // Fetch cached reminders + sync status on mount
+  useEffect(() => {
+    fetchReminders(start, end)
+      .then((data) => setReminders(data.reminders || []))
+      .catch((err) => console.error('Failed to load reminders:', err));
+
+    fetchSyncStatus()
+      .then((data) => {
+        setLastSynced(data.lastSynced);
+        setSyncConfigured(data.configured);
+      })
+      .catch(() => {});
   }, []);
 
   const handleToggle = useCallback(
@@ -36,7 +56,6 @@ export default function App() {
     (dateKey, value) => {
       setNotes((prev) => ({ ...prev, [dateKey]: value }));
 
-      // Debounced save (600ms)
       if (debounceTimers.current[dateKey]) {
         clearTimeout(debounceTimers.current[dateKey]);
       }
@@ -49,25 +68,114 @@ export default function App() {
     []
   );
 
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      const result = await syncReminders();
+      setLastSynced(result.synced_at);
+      // Re-fetch cached reminders after sync
+      const data = await fetchReminders(start, end);
+      setReminders(data.reminders || []);
+    } catch (err) {
+      console.error('Sync failed:', err);
+    } finally {
+      setSyncing(false);
+    }
+  }, [start, end]);
+
+  const handleToggleReminder = useCallback(async (uid) => {
+    // Optimistic update
+    setReminders((prev) =>
+      prev.map((r) => (r.uid === uid ? { ...r, completed: !r.completed } : r))
+    );
+    try {
+      await toggleReminder(uid);
+    } catch (err) {
+      console.error('Failed to toggle reminder:', err);
+      // Revert on failure
+      setReminders((prev) =>
+        prev.map((r) => (r.uid === uid ? { ...r, completed: !r.completed } : r))
+      );
+    }
+  }, []);
+
+  const handleAddReminder = useCallback(async (title, dateKey) => {
+    try {
+      const result = await createReminder(title, dateKey);
+      setReminders((prev) => [
+        ...prev,
+        { uid: result.uid, title: result.title, due_date: result.dueDate, completed: false, priority: 0, calendar_name: 'Reminders' },
+      ]);
+    } catch (err) {
+      console.error('Failed to create reminder:', err);
+    }
+  }, []);
+
+  // Build per-day reminders map
+  const remindersByDay = {};
+  for (const dateObj of weekDates) {
+    const key = formatDate(dateObj);
+    remindersByDay[key] = [];
+  }
+  for (const r of reminders) {
+    const dueKey = r.due_date ? new Date(r.due_date).toISOString().split('T')[0] : null;
+    if (dueKey && remindersByDay[dueKey]) {
+      remindersByDay[dueKey].push(r);
+    } else if (!dueKey) {
+      // No due date → show on today
+      if (remindersByDay[todayKey]) {
+        remindersByDay[todayKey].push(r);
+      }
+    }
+    // Overdue: due before this week's start → show on today
+    if (dueKey && dueKey < start && !r.completed) {
+      if (remindersByDay[todayKey] && !remindersByDay[todayKey].find((x) => x.uid === r.uid)) {
+        remindersByDay[todayKey].push({ ...r, overdue: true });
+      }
+    }
+  }
+
+  // Mark overdue items within existing days
+  for (const key of Object.keys(remindersByDay)) {
+    remindersByDay[key] = remindersByDay[key].map((r) => {
+      const dueKey = r.due_date ? new Date(r.due_date).toISOString().split('T')[0] : null;
+      if (dueKey && dueKey < todayKey && !r.completed) {
+        return { ...r, overdue: true };
+      }
+      return r;
+    });
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-bg-primary">
-      <TopBar today={today} />
+      <TopBar
+        today={today}
+        onSync={handleSync}
+        syncing={syncing}
+        lastSynced={lastSynced}
+        syncConfigured={syncConfigured}
+      />
 
       <main className="flex-1 flex gap-4 p-6">
         {weekDates.map((date, i) => {
           const dateKey = formatDate(date);
+          const dayReminders = remindersByDay[dateKey] || [];
           return (
             <DayColumn
               key={dateKey}
               date={date}
+              dateKey={dateKey}
               theme={DAY_THEMES[i]}
               isToday={isSameDay(date, today)}
               isExpanded={expandedIndex === i}
               onToggle={() => handleToggle(i)}
               note={notes[dateKey] || ''}
               onNoteChange={(val) => handleNoteChange(dateKey, val)}
-              taskCount={0}
+              taskCount={dayReminders.filter((r) => !r.completed).length}
               eventCount={0}
+              reminders={dayReminders}
+              onToggleReminder={handleToggleReminder}
+              onAddReminder={handleAddReminder}
             />
           );
         })}

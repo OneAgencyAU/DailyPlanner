@@ -15,3 +15,48 @@ export async function saveNote(date, note) {
   if (!res.ok) throw new Error('Failed to save note');
   return res.json();
 }
+
+// ─── Reminders ──────────────────────────────────────────────
+
+export async function fetchReminders(startDate, endDate) {
+  const res = await fetch(`${API_BASE}/reminders?start=${startDate}&end=${endDate}`);
+  if (!res.ok) throw new Error('Failed to fetch reminders');
+  return res.json();
+}
+
+export async function fetchSyncStatus() {
+  const res = await fetch(`${API_BASE}/reminders/status`);
+  if (!res.ok) throw new Error('Failed to fetch sync status');
+  return res.json();
+}
+
+export async function syncReminders() {
+  const res = await fetch(`${API_BASE}/reminders/sync`, { method: 'POST' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Sync failed');
+  }
+  return res.json();
+}
+
+export async function toggleReminder(uid) {
+  const res = await fetch(`${API_BASE}/reminders/${uid}/toggle`, { method: 'PATCH' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to toggle reminder');
+  }
+  return res.json();
+}
+
+export async function createReminder(title, dueDate) {
+  const res = await fetch(`${API_BASE}/reminders`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ title, dueDate }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to create reminder');
+  }
+  return res.json();
+}
