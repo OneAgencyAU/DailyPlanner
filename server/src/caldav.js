@@ -3,6 +3,53 @@ import { createDAVClient, DAVNamespaceShort } from 'tsdav';
 const ICLOUD_SERVER = 'https://caldav.icloud.com';
 
 /**
+ * Generate an iCalendar UTC timestamp string (e.g. 20260310T120000Z).
+ */
+function icsTimestamp(date = new Date()) {
+  return (
+    date.getUTCFullYear().toString() +
+    String(date.getUTCMonth() + 1).padStart(2, '0') +
+    String(date.getUTCDate()).padStart(2, '0') +
+    'T' +
+    String(date.getUTCHours()).padStart(2, '0') +
+    String(date.getUTCMinutes()).padStart(2, '0') +
+    String(date.getUTCSeconds()).padStart(2, '0') +
+    'Z'
+  );
+}
+
+/**
+ * Update (or insert) a property in raw VCAL data inside the VTODO block.
+ * Handles both simple props (KEY:VALUE) and parameterised props (KEY;PARAM=X:VALUE).
+ */
+function setVtodoProp(vcal, propName, value) {
+  // Match the property line (possibly with parameters)
+  const regex = new RegExp(`^${propName}[;:][^\\r\\n]*`, 'm');
+  if (regex.test(vcal)) {
+    return vcal.replace(regex, `${propName}:${value}`);
+  }
+  // Insert before END:VTODO
+  return vcal.replace('END:VTODO', `${propName}:${value}\r\nEND:VTODO`);
+}
+
+/**
+ * Remove a property line from raw VCAL data.
+ */
+function removeVtodoProp(vcal, propName) {
+  const regex = new RegExp(`^${propName}[;:][^\\r\\n]*\\r?\\n?`, 'gm');
+  return vcal.replace(regex, '');
+}
+
+/**
+ * Increment the SEQUENCE counter in a VTODO (iOS 13+ uses this for sync).
+ */
+function bumpSequence(vcal) {
+  const match = vcal.match(/^SEQUENCE:(\d+)/m);
+  const seq = match ? parseInt(match[1], 10) + 1 : 1;
+  return setVtodoProp(vcal, 'SEQUENCE', String(seq));
+}
+
+/**
  * Create an authenticated CalDAV client for iCloud.
  */
 async function getClient() {
@@ -27,9 +74,14 @@ async function getClient() {
  * Parse a VTODO string to extract reminder fields.
  */
 function parseVTodo(vcalData, calendarName) {
+  // Unfold iCalendar line folding (RFC 5545 §3.1): lines starting with
+  // a space or tab are continuations of the previous line. iOS 13+ Reminders
+  // frequently uses long property values that get folded.
+  const unfolded = vcalData.replace(/\r?\n[ \t]/g, '');
+
   const get = (key) => {
     const regex = new RegExp(`^${key}[;:](.*)$`, 'm');
-    const match = vcalData.match(regex);
+    const match = unfolded.match(regex);
     if (!match) return null;
     // Handle parameters like DUE;VALUE=DATE:20260310
     let val = match[1];
@@ -157,39 +209,15 @@ export async function fetchAllReminders() {
 export async function completeReminderOnServer(url, etag, rawVcal) {
   const client = await getClient();
 
-  const now = new Date();
-  const timestamp =
-    now.getUTCFullYear().toString() +
-    String(now.getUTCMonth() + 1).padStart(2, '0') +
-    String(now.getUTCDate()).padStart(2, '0') +
-    'T' +
-    String(now.getUTCHours()).padStart(2, '0') +
-    String(now.getUTCMinutes()).padStart(2, '0') +
-    String(now.getUTCSeconds()).padStart(2, '0') +
-    'Z';
+  const now = icsTimestamp();
 
   let updatedVcal = rawVcal;
-
-  // Add or update STATUS
-  if (updatedVcal.includes('STATUS:')) {
-    updatedVcal = updatedVcal.replace(/STATUS:[^\r\n]*/g, 'STATUS:COMPLETED');
-  } else {
-    updatedVcal = updatedVcal.replace('END:VTODO', `STATUS:COMPLETED\r\nEND:VTODO`);
-  }
-
-  // Add COMPLETED timestamp
-  if (updatedVcal.includes('COMPLETED:')) {
-    updatedVcal = updatedVcal.replace(/COMPLETED:[^\r\n]*/g, `COMPLETED:${timestamp}`);
-  } else {
-    updatedVcal = updatedVcal.replace('END:VTODO', `COMPLETED:${timestamp}\r\nEND:VTODO`);
-  }
-
-  // Add PERCENT-COMPLETE
-  if (updatedVcal.includes('PERCENT-COMPLETE:')) {
-    updatedVcal = updatedVcal.replace(/PERCENT-COMPLETE:[^\r\n]*/g, 'PERCENT-COMPLETE:100');
-  } else {
-    updatedVcal = updatedVcal.replace('END:VTODO', `PERCENT-COMPLETE:100\r\nEND:VTODO`);
-  }
+  updatedVcal = setVtodoProp(updatedVcal, 'STATUS', 'COMPLETED');
+  updatedVcal = setVtodoProp(updatedVcal, 'COMPLETED', now);
+  updatedVcal = setVtodoProp(updatedVcal, 'PERCENT-COMPLETE', '100');
+  updatedVcal = setVtodoProp(updatedVcal, 'DTSTAMP', now);
+  updatedVcal = setVtodoProp(updatedVcal, 'LAST-MODIFIED', now);
+  updatedVcal = bumpSequence(updatedVcal);
 
   await client.updateCalendarObject({
     calendarObject: {
@@ -208,21 +236,19 @@ export async function completeReminderOnServer(url, etag, rawVcal) {
 export async function uncompleteReminderOnServer(url, etag, rawVcal) {
   const client = await getClient();
 
+  const now = icsTimestamp();
+
   let updatedVcal = rawVcal;
 
-  // Remove STATUS:COMPLETED
-  updatedVcal = updatedVcal.replace(/STATUS:COMPLETED\r?\n?/g, '');
-  // Remove COMPLETED timestamp
-  updatedVcal = updatedVcal.replace(/COMPLETED:[^\r\n]*\r?\n?/g, '');
-  // Remove PERCENT-COMPLETE
-  updatedVcal = updatedVcal.replace(/PERCENT-COMPLETE:[^\r\n]*\r?\n?/g, '');
+  // Remove completion-related properties
+  updatedVcal = removeVtodoProp(updatedVcal, 'COMPLETED');
+  updatedVcal = removeVtodoProp(updatedVcal, 'PERCENT-COMPLETE');
 
-  // Set STATUS to NEEDS-ACTION
-  if (updatedVcal.includes('STATUS:')) {
-    updatedVcal = updatedVcal.replace(/STATUS:[^\r\n]*/g, 'STATUS:NEEDS-ACTION');
-  } else {
-    updatedVcal = updatedVcal.replace('END:VTODO', `STATUS:NEEDS-ACTION\r\nEND:VTODO`);
-  }
+  // Set status and update modification timestamps
+  updatedVcal = setVtodoProp(updatedVcal, 'STATUS', 'NEEDS-ACTION');
+  updatedVcal = setVtodoProp(updatedVcal, 'DTSTAMP', now);
+  updatedVcal = setVtodoProp(updatedVcal, 'LAST-MODIFIED', now);
+  updatedVcal = bumpSequence(updatedVcal);
 
   await client.updateCalendarObject({
     calendarObject: {
@@ -253,11 +279,12 @@ export async function createReminderOnServer(title, dueDate) {
   }
 
   const uid = crypto.randomUUID();
+  const now = icsTimestamp();
 
   let dueLine = '';
   if (dueDate) {
     const clean = dueDate.replace(/-/g, '');
-    dueLine = `DUE;VALUE=DATE:${clean}\r\n`;
+    dueLine = `DUE;VALUE=DATE:${clean}`;
   }
 
   const vcalData = [
@@ -266,13 +293,18 @@ export async function createReminderOnServer(title, dueDate) {
     'PRODID:-//OneAgency//DailyPlanner//EN',
     'BEGIN:VTODO',
     `UID:${uid}`,
+    `DTSTAMP:${now}`,
+    `CREATED:${now}`,
+    `LAST-MODIFIED:${now}`,
     `SUMMARY:${title}`,
-    dueLine ? dueLine.trim() : null,
+    dueLine || null,
     'STATUS:NEEDS-ACTION',
+    'SEQUENCE:0',
     'END:VTODO',
     'END:VCALENDAR',
+    '', // trailing newline
   ]
-    .filter(Boolean)
+    .filter((line) => line !== null)
     .join('\r\n');
 
   const response = await client.createCalendarObject({
