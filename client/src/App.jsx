@@ -21,6 +21,7 @@ export default function App() {
   const [googleAppConfigured, setGoogleAppConfigured] = useState(false);
   const [draggingTask, setDraggingTask] = useState(null); // { uid, title }
   const dragTimeoutRef = useRef(null);
+  const dragStartPos = useRef(null);
   const debounceTimers = useRef({});
 
   // Compute the week dates based on offset
@@ -164,19 +165,56 @@ export default function App() {
     setViewMode('week');
   }, [baseMonday]);
 
-  // Drag state management — show calendar overlay after a brief hold
-  const handleTaskDragStart = useCallback((uid, title) => {
-    // Show overlay after 600ms of holding the drag (gives time for same-week drops)
+  // Drag state management — show calendar overlay only when holding still
+  // If cursor moves more than 20px, reset the timer (user is dragging within week)
+  const HOLD_RADIUS = 20;
+  const HOLD_DELAY = 800;
+
+  const startHoldTimer = useCallback((uid, title) => {
+    if (dragTimeoutRef.current) clearTimeout(dragTimeoutRef.current);
     dragTimeoutRef.current = setTimeout(() => {
       setDraggingTask({ uid, title });
-    }, 600);
+    }, HOLD_DELAY);
   }, []);
+
+  const handleTaskDragStart = useCallback((uid, title) => {
+    dragStartPos.current = { uid, title, x: null, y: null };
+
+    const onDragOver = (e) => {
+      if (!dragStartPos.current) return;
+      const { x, y } = dragStartPos.current;
+      if (x === null) {
+        // First move event — record starting position and begin timer
+        dragStartPos.current.x = e.clientX;
+        dragStartPos.current.y = e.clientY;
+        startHoldTimer(uid, title);
+        return;
+      }
+      const dx = e.clientX - x;
+      const dy = e.clientY - y;
+      if (Math.sqrt(dx * dx + dy * dy) > HOLD_RADIUS) {
+        // Moved too far — reset anchor point and restart timer
+        dragStartPos.current.x = e.clientX;
+        dragStartPos.current.y = e.clientY;
+        if (dragTimeoutRef.current) clearTimeout(dragTimeoutRef.current);
+        startHoldTimer(uid, title);
+      }
+    };
+
+    document.addEventListener('dragover', onDragOver);
+    // Store cleanup ref
+    dragStartPos.current._cleanup = () => document.removeEventListener('dragover', onDragOver);
+  }, [startHoldTimer]);
 
   const handleTaskDragEnd = useCallback(() => {
     if (dragTimeoutRef.current) {
       clearTimeout(dragTimeoutRef.current);
       dragTimeoutRef.current = null;
     }
+    if (dragStartPos.current?._cleanup) {
+      dragStartPos.current._cleanup();
+    }
+    dragStartPos.current = null;
     setDraggingTask(null);
   }, []);
 
