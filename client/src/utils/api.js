@@ -61,6 +61,15 @@ export async function createReminder(title, dueDate) {
   return res.json();
 }
 
+export async function deleteReminder(uid) {
+  const res = await fetch(`${API_BASE}/reminders/${uid}`, { method: 'DELETE' });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to delete task');
+  }
+  return res.json();
+}
+
 export async function moveReminder(uid, newDueDate) {
   const res = await fetch(`${API_BASE}/reminders/${uid}/move`, {
     method: 'PATCH',

@@ -15,6 +15,7 @@ export default function DayColumn({
   reminders = [],
   onToggleReminder,
   onMoveReminder,
+  onDeleteReminder,
   onAddReminder,
   weekDates = [],
 }) {
@@ -62,7 +63,6 @@ export default function DayColumn({
   }, []);
 
   const handleDragLeave = useCallback((e) => {
-    // Only clear if we're leaving the column entirely, not entering a child
     if (!e.currentTarget.contains(e.relatedTarget)) {
       setDragOver(false);
     }
@@ -213,6 +213,7 @@ export default function DayColumn({
                     key={r.uid}
                     reminder={r}
                     onToggle={() => onToggleReminder(r.uid)}
+                    onDelete={() => onDeleteReminder(r.uid)}
                     onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
                     onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
                   />
@@ -227,6 +228,7 @@ export default function DayColumn({
                     key={r.uid}
                     reminder={r}
                     onToggle={() => onToggleReminder(r.uid)}
+                    onDelete={() => onDeleteReminder(r.uid)}
                     onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
                     onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
                   />
@@ -256,11 +258,10 @@ export default function DayColumn({
   );
 }
 
-function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
+function TaskItem({ reminder, onToggle, onDelete, onMoveLeft, onMoveRight }) {
   const handleDragStart = useCallback((e) => {
     e.dataTransfer.setData('text/plain', reminder.uid);
     e.dataTransfer.effectAllowed = 'move';
-    // Add a slight delay so the drag ghost looks right
     e.currentTarget.style.opacity = '0.4';
   }, [reminder.uid]);
 
@@ -308,24 +309,16 @@ function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
         >
           {reminder.title}
         </span>
-        <div className="flex items-center gap-1">
-          {reminder.overdue && !reminder.completed && (
-            <span className="text-[10px] text-amber-500/80">Overdue</span>
-          )}
-          {reminder.calendar_name && reminder.calendar_name !== 'My Tasks' && (
-            <span className="text-[10px] text-text-muted">{reminder.calendar_name}</span>
-          )}
-        </div>
+        {reminder.overdue && !reminder.completed && (
+          <span className="text-[10px] text-amber-500/80">Overdue</span>
+        )}
       </div>
 
-      {/* Move arrows — visible on hover */}
+      {/* Actions — visible on hover */}
       <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5">
         {onMoveLeft && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveLeft();
-            }}
+            onClick={(e) => { e.stopPropagation(); onMoveLeft(); }}
             title="Move to previous day"
             className="w-5 h-5 rounded flex items-center justify-center text-text-muted hover:text-accent-blue hover:bg-accent-blue/10 transition-colors"
           >
@@ -336,10 +329,7 @@ function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
         )}
         {onMoveRight && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onMoveRight();
-            }}
+            onClick={(e) => { e.stopPropagation(); onMoveRight(); }}
             title="Move to next day"
             className="w-5 h-5 rounded flex items-center justify-center text-text-muted hover:text-accent-blue hover:bg-accent-blue/10 transition-colors"
           >
@@ -348,6 +338,16 @@ function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
             </svg>
           </button>
         )}
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Delete task"
+          className="w-5 h-5 rounded flex items-center justify-center text-text-muted hover:text-red-400 hover:bg-red-400/10 transition-colors"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6" />
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+          </svg>
+        </button>
       </div>
     </div>
   );

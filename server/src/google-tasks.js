@@ -226,3 +226,22 @@ export async function createTask(refreshToken, title, dueDate) {
     completed: false,
   };
 }
+
+/**
+ * Delete a task from Google Tasks.
+ */
+export async function deleteTask(refreshToken, taskId) {
+  const client = getClient(refreshToken);
+  const lists = await fetchTaskLists(refreshToken);
+
+  for (const list of lists) {
+    try {
+      await client.tasks.delete({ tasklist: list.id, task: taskId });
+      return { uid: taskId, deleted: true };
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error('Task not found in any list');
+}

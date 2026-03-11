@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pool from './db.js';
-import { getAuthUrl, exchangeCode, fetchAllTasks, toggleTask, moveTask, createTask } from './google-tasks.js';
+import { getAuthUrl, exchangeCode, fetchAllTasks, toggleTask, moveTask, deleteTask, createTask } from './google-tasks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -214,6 +214,21 @@ app.patch('/api/reminders/:uid/move', async (req, res) => {
   } catch (err) {
     console.error('Error moving task:', err);
     res.status(500).json({ error: `Failed to move: ${err.message}` });
+  }
+});
+
+app.delete('/api/reminders/:uid', async (req, res) => {
+  const { uid } = req.params;
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Google Tasks not connected' });
+  }
+  try {
+    const result = await deleteTask(refreshToken, uid);
+    res.json(result);
+  } catch (err) {
+    console.error('Error deleting task:', err);
+    res.status(500).json({ error: `Failed to delete: ${err.message}` });
   }
 });
 
