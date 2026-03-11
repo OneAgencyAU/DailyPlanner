@@ -1,4 +1,5 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { formatDate } from '../utils/days';
 
 export default function DayColumn({
   date,
@@ -13,7 +14,9 @@ export default function DayColumn({
   eventCount,
   reminders = [],
   onToggleReminder,
+  onMoveReminder,
   onAddReminder,
+  weekDates = [],
 }) {
   const textareaRef = useRef(null);
   const [newTask, setNewTask] = useState('');
@@ -44,6 +47,11 @@ export default function DayColumn({
     },
     [newTask, dateKey, onAddReminder]
   );
+
+  // Determine adjacent day keys for move arrows
+  const dayIndex = weekDates.findIndex((d) => formatDate(d) === dateKey);
+  const prevDateKey = dayIndex > 0 ? formatDate(weekDates[dayIndex - 1]) : null;
+  const nextDateKey = dayIndex < weekDates.length - 1 ? formatDate(weekDates[dayIndex + 1]) : null;
 
   const themeColor = theme.color;
 
@@ -172,6 +180,8 @@ export default function DayColumn({
                     key={r.uid}
                     reminder={r}
                     onToggle={() => onToggleReminder(r.uid)}
+                    onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
+                    onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
                   />
                 ))}
 
@@ -184,6 +194,8 @@ export default function DayColumn({
                     key={r.uid}
                     reminder={r}
                     onToggle={() => onToggleReminder(r.uid)}
+                    onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
+                    onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
                   />
                 ))}
               </div>
@@ -211,7 +223,7 @@ export default function DayColumn({
   );
 }
 
-function TaskItem({ reminder, onToggle }) {
+function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
   return (
     <div
       className={`flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-bg-primary/50 group ${
@@ -249,11 +261,45 @@ function TaskItem({ reminder, onToggle }) {
         >
           {reminder.title}
         </span>
-        {reminder.overdue && !reminder.completed && (
-          <span className="text-[10px] text-amber-500/80">Overdue</span>
+        <div className="flex items-center gap-1">
+          {reminder.overdue && !reminder.completed && (
+            <span className="text-[10px] text-amber-500/80">Overdue</span>
+          )}
+          {reminder.calendar_name && reminder.calendar_name !== 'My Tasks' && (
+            <span className="text-[10px] text-text-muted">{reminder.calendar_name}</span>
+          )}
+        </div>
+      </div>
+
+      {/* Move arrows — visible on hover */}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5">
+        {onMoveLeft && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveLeft();
+            }}
+            title="Move to previous day"
+            className="w-5 h-5 rounded flex items-center justify-center text-text-muted hover:text-accent-blue hover:bg-accent-blue/10 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+          </button>
         )}
-        {reminder.calendar_name && reminder.calendar_name !== 'Reminders' && (
-          <span className="text-[10px] text-text-muted ml-1">{reminder.calendar_name}</span>
+        {onMoveRight && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onMoveRight();
+            }}
+            title="Move to next day"
+            className="w-5 h-5 rounded flex items-center justify-center text-text-muted hover:text-accent-blue hover:bg-accent-blue/10 transition-colors"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          </button>
         )}
       </div>
     </div>

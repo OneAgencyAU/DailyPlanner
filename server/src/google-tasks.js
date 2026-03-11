@@ -165,6 +165,37 @@ export async function toggleTask(refreshToken, taskId) {
 }
 
 /**
+ * Move a task to a new due date.
+ */
+export async function moveTask(refreshToken, taskId, newDueDate) {
+  const client = getClient(refreshToken);
+  const lists = await fetchTaskLists(refreshToken);
+
+  for (const list of lists) {
+    try {
+      await client.tasks.get({ tasklist: list.id, task: taskId });
+
+      const updated = await client.tasks.patch({
+        tasklist: list.id,
+        task: taskId,
+        requestBody: {
+          due: newDueDate ? new Date(newDueDate + 'T00:00:00Z').toISOString() : null,
+        },
+      });
+
+      return {
+        uid: updated.data.id,
+        due_date: updated.data.due ? updated.data.due.split('T')[0] : null,
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  throw new Error('Task not found in any list');
+}
+
+/**
  * Create a new task in the default (first) task list.
  */
 export async function createTask(refreshToken, title, dueDate) {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import TopBar from './components/TopBar';
 import DayColumn from './components/DayColumn';
 import { DAY_THEMES, getWeekDates, formatDate, isSameDay } from './utils/days';
-import { fetchNotes, saveNote, fetchReminders, syncReminders, toggleReminder, createReminder, fetchSyncStatus } from './utils/api';
+import { fetchNotes, saveNote, fetchReminders, syncReminders, toggleReminder, moveReminder, createReminder, fetchSyncStatus } from './utils/api';
 
 export default function App() {
   const today = new Date();
@@ -125,6 +125,21 @@ export default function App() {
     }
   }, []);
 
+  const handleMoveReminder = useCallback(async (uid, newDateKey) => {
+    // Optimistic update
+    setReminders((prev) =>
+      prev.map((r) => (r.uid === uid ? { ...r, due_date: newDateKey } : r))
+    );
+    try {
+      await moveReminder(uid, newDateKey);
+    } catch (err) {
+      console.error('Failed to move task:', err);
+      // Reload on failure to revert
+      const data = await fetchReminders(start, end);
+      setReminders(data.reminders || []);
+    }
+  }, [start, end]);
+
   // Build per-day reminders map
   const remindersByDay = {};
   for (const dateObj of weekDates) {
@@ -190,7 +205,9 @@ export default function App() {
               eventCount={0}
               reminders={dayReminders}
               onToggleReminder={handleToggleReminder}
+              onMoveReminder={handleMoveReminder}
               onAddReminder={handleAddReminder}
+              weekDates={weekDates}
             />
           );
         })}

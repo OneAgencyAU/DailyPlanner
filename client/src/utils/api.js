@@ -61,6 +61,19 @@ export async function createReminder(title, dueDate) {
   return res.json();
 }
 
+export async function moveReminder(uid, newDueDate) {
+  const res = await fetch(`${API_BASE}/reminders/${uid}/move`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dueDate: newDueDate }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Failed to move task');
+  }
+  return res.json();
+}
+
 export async function disconnectGoogle() {
   const res = await fetch(`${API_BASE}/auth/google/disconnect`, { method: 'POST' });
   if (!res.ok) throw new Error('Failed to disconnect');
