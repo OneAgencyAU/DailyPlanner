@@ -1,25 +1,58 @@
 import { google } from 'googleapis';
 
-function getAuth() {
+/**
+ * Create an OAuth2 client. If a refreshToken is provided, set it.
+ */
+function createOAuth2Client(refreshToken) {
   const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET
   );
-  oauth2Client.setCredentials({
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN,
-  });
+  if (refreshToken) {
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+  }
   return oauth2Client;
 }
 
-function getClient() {
-  return google.tasks({ version: 'v1', auth: getAuth() });
+function getClient(refreshToken) {
+  const auth = createOAuth2Client(refreshToken);
+  return google.tasks({ version: 'v1', auth });
+}
+
+/**
+ * Generate the Google OAuth2 consent URL.
+ */
+export function getAuthUrl(redirectUri) {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri
+  );
+  return oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    prompt: 'consent',
+    scope: ['https://www.googleapis.com/auth/tasks'],
+  });
+}
+
+/**
+ * Exchange an authorization code for tokens.
+ */
+export async function exchangeCode(code, redirectUri) {
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    redirectUri
+  );
+  const { tokens } = await oauth2Client.getToken(code);
+  return tokens;
 }
 
 /**
  * Fetch all task lists the user has.
  */
-export async function fetchTaskLists() {
-  const client = getClient();
+export async function fetchTaskLists(refreshToken) {
+  const client = getClient(refreshToken);
   const res = await client.tasklists.list({ maxResults: 100 });
   return res.data.items || [];
 }
@@ -28,9 +61,9 @@ export async function fetchTaskLists() {
  * Fetch all tasks across all lists, optionally filtered by due date range.
  * Returns a flat array with list name attached.
  */
-export async function fetchAllTasks(startDate, endDate) {
-  const client = getClient();
-  const lists = await fetchTaskLists();
+export async function fetchAllTasks(refreshToken, startDate, endDate) {
+  const client = getClient(refreshToken);
+  const lists = await fetchTaskLists(refreshToken);
 
   const allTasks = [];
 
@@ -45,7 +78,6 @@ export async function fetchAllTasks(startDate, endDate) {
         pageToken,
       };
 
-      // Only use date filters if provided
       if (startDate) {
         params.dueMin = new Date(startDate + 'T00:00:00Z').toISOString();
       }
@@ -57,7 +89,7 @@ export async function fetchAllTasks(startDate, endDate) {
       const items = res.data.items || [];
 
       for (const task of items) {
-        if (!task.title) continue; // skip blank/deleted tasks
+        if (!task.title) continue;
         allTasks.push({
           uid: task.id,
           title: task.title,
@@ -67,7 +99,6 @@ export async function fetchAllTasks(startDate, endDate) {
           priority: 0,
           calendar_name: list.title,
           notes: task.notes || null,
-          // Keep references for updates
           _tasklistId: list.id,
         });
       }
@@ -76,7 +107,7 @@ export async function fetchAllTasks(startDate, endDate) {
     } while (pageToken);
   }
 
-  // Also fetch tasks with no due date (they aren't returned by dueMin/dueMax)
+  // Also fetch tasks with no due date (not returned by dueMin/dueMax filters)
   if (startDate || endDate) {
     for (const list of lists) {
       let pageToken = null;
@@ -90,8 +121,8 @@ export async function fetchAllTasks(startDate, endDate) {
         });
         const items = res.data.items || [];
         for (const task of items) {
-          if (!task.title || task.due) continue; // skip if has due date (already fetched) or no title
-          if (allTasks.some((t) => t.uid === task.id)) continue; // dedupe
+          if (!task.title || task.due) continue;
+          if (allTasks.some((t) => t.uid === task.id)) continue;
           allTasks.push({
             uid: task.id,
             title: task.title,
@@ -115,11 +146,10 @@ export async function fetchAllTasks(startDate, endDate) {
 /**
  * Toggle a task's completion status.
  */
-export async function toggleTask(taskId) {
-  const client = getClient();
-  const lists = await fetchTaskLists();
+export async function toggleTask(refreshToken, taskId) {
+  const client = getClient(refreshToken);
+  const lists = await fetchTaskLists(refreshToken);
 
-  // Find which list contains this task
   for (const list of lists) {
     try {
       const res = await client.tasks.get({ tasklist: list.id, task: taskId });
@@ -142,7 +172,6 @@ export async function toggleTask(taskId) {
         completed: updated.data.status === 'completed',
       };
     } catch {
-      // Task not in this list, try next
       continue;
     }
   }
@@ -153,9 +182,9 @@ export async function toggleTask(taskId) {
 /**
  * Create a new task in the default (first) task list.
  */
-export async function createTask(title, dueDate) {
-  const client = getClient();
-  const lists = await fetchTaskLists();
+export async function createTask(refreshToken, title, dueDate) {
+  const client = getClient(refreshToken);
+  const lists = await fetchTaskLists(refreshToken);
   if (lists.length === 0) {
     throw new Error('No task lists found');
   }

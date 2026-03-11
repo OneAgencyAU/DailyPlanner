@@ -1,6 +1,7 @@
 import { getWeekNumber } from '../utils/days';
+import { getGoogleAuthUrl } from '../utils/api';
 
-export default function TopBar({ today, onSync, syncing, lastSynced, syncConfigured }) {
+export default function TopBar({ today, onSync, syncing, lastSynced, syncConfigured, googleAppConfigured }) {
   const dayName = today.toLocaleDateString('en-AU', { weekday: 'long' });
   const dateStr = today.toLocaleDateString('en-AU', {
     day: 'numeric',
@@ -13,7 +14,7 @@ export default function TopBar({ today, onSync, syncing, lastSynced, syncConfigu
     ? 'Syncing…'
     : lastSynced
       ? `Synced ${new Date(lastSynced).toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit' })}`
-      : 'Sync Reminders';
+      : 'Sync Tasks';
 
   return (
     <header className="flex items-center justify-between px-8 py-5 border-b border-border">
@@ -25,7 +26,7 @@ export default function TopBar({ today, onSync, syncing, lastSynced, syncConfigu
         <span className="text-text-secondary text-sm">Daily Planner</span>
       </div>
       <div className="flex items-center gap-6">
-        {syncConfigured && (
+        {syncConfigured ? (
           <button
             onClick={onSync}
             disabled={syncing}
@@ -46,7 +47,17 @@ export default function TopBar({ today, onSync, syncing, lastSynced, syncConfigu
             </svg>
             {syncLabel}
           </button>
-        )}
+        ) : googleAppConfigured ? (
+          <a
+            href={getGoogleAuthUrl()}
+            className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-accent-purple/50 text-accent-purple hover:bg-accent-purple/10 transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13.8 12H3" />
+            </svg>
+            Connect Google Tasks
+          </a>
+        ) : null}
         <span className="text-text-secondary text-sm">Week {weekNum}</span>
         <div className="h-5 w-px bg-border" />
         <span className="text-text-primary text-sm font-medium">{dayName}</span>

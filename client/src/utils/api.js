@@ -16,7 +16,7 @@ export async function saveNote(date, note) {
   return res.json();
 }
 
-// ─── Reminders ──────────────────────────────────────────────
+// ─── Tasks (Google Tasks) ───────────────────────────────────
 
 export async function fetchReminders(startDate, endDate) {
   const res = await fetch(`${API_BASE}/reminders?start=${startDate}&end=${endDate}`);
@@ -59,4 +59,14 @@ export async function createReminder(title, dueDate) {
     throw new Error(data.error || 'Failed to create reminder');
   }
   return res.json();
+}
+
+export async function disconnectGoogle() {
+  const res = await fetch(`${API_BASE}/auth/google/disconnect`, { method: 'POST' });
+  if (!res.ok) throw new Error('Failed to disconnect');
+  return res.json();
+}
+
+export function getGoogleAuthUrl() {
+  return `${API_BASE}/auth/google`;
 }

@@ -19,6 +19,7 @@ export default function App() {
   const [syncing, setSyncing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);
   const [syncConfigured, setSyncConfigured] = useState(false);
+  const [googleAppConfigured, setGoogleAppConfigured] = useState(false);
   const debounceTimers = useRef({});
 
   const start = formatDate(weekDates[0]);
@@ -31,18 +32,31 @@ export default function App() {
       .catch((err) => console.error('Failed to load notes:', err));
   }, []);
 
-  // Fetch cached reminders + sync status on mount
-  useEffect(() => {
+  // Fetch tasks + sync status on mount (and after OAuth redirect)
+  const loadTasks = useCallback(() => {
     fetchReminders(start, end)
       .then((data) => setReminders(data.reminders || []))
-      .catch((err) => console.error('Failed to load reminders:', err));
+      .catch((err) => console.error('Failed to load tasks:', err));
 
     fetchSyncStatus()
       .then((data) => {
         setLastSynced(data.lastSynced);
         setSyncConfigured(data.configured);
+        setGoogleAppConfigured(data.googleAppConfigured || false);
       })
       .catch(() => {});
+  }, [start, end]);
+
+  useEffect(() => {
+    loadTasks();
+
+    // Handle OAuth redirect (?auth=success)
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auth') === 'success') {
+      window.history.replaceState({}, '', '/');
+      // Re-fetch after a brief delay to let token settle
+      setTimeout(loadTasks, 500);
+    }
   }, []);
 
   const handleToggle = useCallback(
@@ -154,6 +168,7 @@ export default function App() {
         syncing={syncing}
         lastSynced={lastSynced}
         syncConfigured={syncConfigured}
+        googleAppConfigured={googleAppConfigured}
       />
 
       <main className="flex-1 flex gap-4 p-6">

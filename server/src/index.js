@@ -3,7 +3,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pool from './db.js';
-import { fetchAllTasks, toggleTask, createTask } from './google-tasks.js';
+import { getAuthUrl, exchangeCode, fetchAllTasks, toggleTask, createTask } from './google-tasks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -12,15 +12,49 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json());
 
-const isGoogleConfigured = () =>
-  !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN);
+// ─── Helpers ────────────────────────────────────────────────
 
-// Health check
+const isGoogleAppConfigured = () =>
+  !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+
+/** Get the stored Google refresh token from the settings table. */
+async function getRefreshToken() {
+  // Check env var first (fallback), then DB
+  if (process.env.GOOGLE_REFRESH_TOKEN) return process.env.GOOGLE_REFRESH_TOKEN;
+  try {
+    const result = await pool.query("SELECT value FROM settings WHERE key = 'google_refresh_token'");
+    return result.rows.length > 0 ? result.rows[0].value : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Store the Google refresh token in the settings table. */
+async function saveRefreshToken(token) {
+  await pool.query(
+    `INSERT INTO settings (key, value, updated_at)
+     VALUES ('google_refresh_token', $1, NOW())
+     ON CONFLICT (key)
+     DO UPDATE SET value = $1, updated_at = NOW()`,
+    [token]
+  );
+}
+
+/** Build the OAuth2 redirect URI from the request. */
+function getRedirectUri(req) {
+  const proto = req.get('x-forwarded-proto') || req.protocol;
+  const host = req.get('x-forwarded-host') || req.get('host');
+  return `${proto}://${host}/api/auth/google/callback`;
+}
+
+// ─── Health ─────────────────────────────────────────────────
+
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-// Get notes for a date range (week)
+// ─── Notes ──────────────────────────────────────────────────
+
 app.get('/api/notes', async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) {
@@ -44,7 +78,6 @@ app.get('/api/notes', async (req, res) => {
   }
 });
 
-// Upsert a note for a specific date
 app.put('/api/notes/:date', async (req, res) => {
   const { date } = req.params;
   const { note } = req.body;
@@ -63,19 +96,65 @@ app.put('/api/notes/:date', async (req, res) => {
   }
 });
 
+// ─── Google OAuth2 ──────────────────────────────────────────
+
+// Start the OAuth flow — redirects browser to Google
+app.get('/api/auth/google', (req, res) => {
+  if (!isGoogleAppConfigured()) {
+    return res.status(400).json({ error: 'GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET env vars not set' });
+  }
+  const redirectUri = getRedirectUri(req);
+  const url = getAuthUrl(redirectUri);
+  res.redirect(url);
+});
+
+// Google redirects back here with ?code=...
+app.get('/api/auth/google/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error) {
+    return res.redirect('/?auth=error&message=' + encodeURIComponent(error));
+  }
+  if (!code) {
+    return res.redirect('/?auth=error&message=no_code');
+  }
+  try {
+    const redirectUri = getRedirectUri(req);
+    const tokens = await exchangeCode(code, redirectUri);
+    if (tokens.refresh_token) {
+      await saveRefreshToken(tokens.refresh_token);
+      console.log('Google Tasks connected successfully');
+    }
+    res.redirect('/?auth=success');
+  } catch (err) {
+    console.error('OAuth callback error:', err);
+    res.redirect('/?auth=error&message=' + encodeURIComponent(err.message));
+  }
+});
+
+// Disconnect Google Tasks
+app.post('/api/auth/google/disconnect', async (req, res) => {
+  try {
+    await pool.query("DELETE FROM settings WHERE key = 'google_refresh_token'");
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error disconnecting:', err);
+    res.status(500).json({ error: 'Failed to disconnect' });
+  }
+});
+
 // ─── Tasks (Google Tasks) ───────────────────────────────────
 
-// Get tasks for a date range — fetches directly from Google Tasks API
 app.get('/api/reminders', async (req, res) => {
   const { start, end } = req.query;
   if (!start || !end) {
     return res.status(400).json({ error: 'start and end query params required' });
   }
-  if (!isGoogleConfigured()) {
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
     return res.json({ reminders: [], synced_at: null });
   }
   try {
-    const tasks = await fetchAllTasks(start, end);
+    const tasks = await fetchAllTasks(refreshToken, start, end);
     res.json({ reminders: tasks, synced_at: new Date().toISOString() });
   } catch (err) {
     console.error('Error fetching tasks:', err);
@@ -83,21 +162,23 @@ app.get('/api/reminders', async (req, res) => {
   }
 });
 
-// Sync status — with Google Tasks, every fetch is live so we just report config status
-app.get('/api/reminders/status', (req, res) => {
+app.get('/api/reminders/status', async (req, res) => {
+  const refreshToken = await getRefreshToken();
+  const connected = !!refreshToken;
   res.json({
-    lastSynced: isGoogleConfigured() ? new Date().toISOString() : null,
-    configured: isGoogleConfigured(),
+    lastSynced: connected ? new Date().toISOString() : null,
+    configured: connected,
+    googleAppConfigured: isGoogleAppConfigured(),
   });
 });
 
-// Manual sync — just re-fetches from Google Tasks (kept for frontend compatibility)
 app.post('/api/reminders/sync', async (req, res) => {
-  if (!isGoogleConfigured()) {
-    return res.status(400).json({ error: 'Google Tasks credentials not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REFRESH_TOKEN.' });
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Google Tasks not connected. Click "Connect Google Tasks" to set up.' });
   }
   try {
-    const tasks = await fetchAllTasks();
+    const tasks = await fetchAllTasks(refreshToken);
     res.json({ count: tasks.length, synced_at: new Date().toISOString() });
   } catch (err) {
     console.error('Sync failed:', err);
@@ -105,14 +186,14 @@ app.post('/api/reminders/sync', async (req, res) => {
   }
 });
 
-// Toggle task completion — updates directly on Google Tasks
 app.patch('/api/reminders/:uid/toggle', async (req, res) => {
   const { uid } = req.params;
-  if (!isGoogleConfigured()) {
-    return res.status(400).json({ error: 'Google Tasks not configured' });
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Google Tasks not connected' });
   }
   try {
-    const result = await toggleTask(uid);
+    const result = await toggleTask(refreshToken, uid);
     res.json(result);
   } catch (err) {
     console.error('Error toggling task:', err);
@@ -120,17 +201,17 @@ app.patch('/api/reminders/:uid/toggle', async (req, res) => {
   }
 });
 
-// Create a new task on Google Tasks
 app.post('/api/reminders', async (req, res) => {
   const { title, dueDate } = req.body;
   if (!title) {
     return res.status(400).json({ error: 'title is required' });
   }
-  if (!isGoogleConfigured()) {
-    return res.status(400).json({ error: 'Google Tasks not configured' });
+  const refreshToken = await getRefreshToken();
+  if (!refreshToken) {
+    return res.status(400).json({ error: 'Google Tasks not connected' });
   }
   try {
-    const task = await createTask(title, dueDate || null);
+    const task = await createTask(refreshToken, title, dueDate || null);
     res.json(task);
   } catch (err) {
     console.error('Error creating task:', err);
@@ -138,7 +219,8 @@ app.post('/api/reminders', async (req, res) => {
   }
 });
 
-// Serve client build in production
+// ─── Static / SPA ───────────────────────────────────────────
+
 const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 app.get('*', (req, res) => {
@@ -147,5 +229,5 @@ app.get('*', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  console.log(`Google Tasks configured: ${isGoogleConfigured()}`);
+  console.log(`Google OAuth app configured: ${isGoogleAppConfigured()}`);
 });
