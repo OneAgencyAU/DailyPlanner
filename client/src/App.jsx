@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import TopBar from './components/TopBar';
 import DayColumn from './components/DayColumn';
 import CalendarView from './components/CalendarView';
+import CalendarDropOverlay from './components/CalendarDropOverlay';
 import { DAY_THEMES, getWeekDates, getMonday, formatDate, isSameDay } from './utils/days';
 import { fetchNotes, saveNote, fetchReminders, syncReminders, toggleReminder, moveReminder, deleteReminder, createReminder, fetchSyncStatus } from './utils/api';
 
@@ -18,6 +19,8 @@ export default function App() {
   const [lastSynced, setLastSynced] = useState(null);
   const [syncConfigured, setSyncConfigured] = useState(false);
   const [googleAppConfigured, setGoogleAppConfigured] = useState(false);
+  const [draggingTask, setDraggingTask] = useState(null); // { uid, title }
+  const dragTimeoutRef = useRef(null);
   const debounceTimers = useRef({});
 
   // Compute the week dates based on offset
@@ -153,7 +156,6 @@ export default function App() {
   const handleNextWeek = useCallback(() => setWeekOffset((o) => o + 1), []);
   const handleToday = useCallback(() => setWeekOffset(0), []);
 
-  // Navigate to a specific date from calendar view
   const handleGoToDate = useCallback((dateStr) => {
     const target = new Date(dateStr + 'T00:00:00');
     const targetMonday = getMonday(target);
@@ -161,6 +163,37 @@ export default function App() {
     setWeekOffset(diff);
     setViewMode('week');
   }, [baseMonday]);
+
+  // Drag state management — show calendar overlay after a brief hold
+  const handleTaskDragStart = useCallback((uid, title) => {
+    // Show overlay after 600ms of holding the drag (gives time for same-week drops)
+    dragTimeoutRef.current = setTimeout(() => {
+      setDraggingTask({ uid, title });
+    }, 600);
+  }, []);
+
+  const handleTaskDragEnd = useCallback(() => {
+    if (dragTimeoutRef.current) {
+      clearTimeout(dragTimeoutRef.current);
+      dragTimeoutRef.current = null;
+    }
+    setDraggingTask(null);
+  }, []);
+
+  const handleCalendarDrop = useCallback(async (newDateKey) => {
+    if (!draggingTask) return;
+    const { uid } = draggingTask;
+    setDraggingTask(null);
+    await handleMoveReminder(uid, newDateKey);
+    // Navigate to the dropped week
+    handleGoToDate(newDateKey);
+    // Reload tasks for that week
+    setTimeout(loadTasks, 300);
+  }, [draggingTask, handleMoveReminder, handleGoToDate, loadTasks]);
+
+  const handleCalendarDropCancel = useCallback(() => {
+    setDraggingTask(null);
+  }, []);
 
   // Build per-day reminders map
   const remindersByDay = {};
@@ -236,6 +269,8 @@ export default function App() {
                 onMoveReminder={handleMoveReminder}
                 onDeleteReminder={handleDeleteReminder}
                 onAddReminder={handleAddReminder}
+                onTaskDragStart={handleTaskDragStart}
+                onTaskDragEnd={handleTaskDragEnd}
                 weekDates={weekDates}
               />
             );
@@ -247,6 +282,16 @@ export default function App() {
           reminders={reminders}
           weekDates={weekDates}
           onGoToDate={handleGoToDate}
+        />
+      )}
+
+      {/* Calendar drop overlay — appears when dragging a task for 600ms */}
+      {draggingTask && (
+        <CalendarDropOverlay
+          today={today}
+          taskTitle={draggingTask.title}
+          onDrop={handleCalendarDrop}
+          onCancel={handleCalendarDropCancel}
         />
       )}
     </div>

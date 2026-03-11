@@ -17,6 +17,8 @@ export default function DayColumn({
   onMoveReminder,
   onDeleteReminder,
   onAddReminder,
+  onTaskDragStart,
+  onTaskDragEnd,
   weekDates = [],
 }) {
   const textareaRef = useRef(null);
@@ -216,6 +218,8 @@ export default function DayColumn({
                     onDelete={() => onDeleteReminder(r.uid)}
                     onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
                     onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
+                    onDragStart={onTaskDragStart}
+                    onDragEnd={onTaskDragEnd}
                   />
                 ))}
 
@@ -231,6 +235,8 @@ export default function DayColumn({
                     onDelete={() => onDeleteReminder(r.uid)}
                     onMoveLeft={prevDateKey ? () => onMoveReminder(r.uid, prevDateKey) : null}
                     onMoveRight={nextDateKey ? () => onMoveReminder(r.uid, nextDateKey) : null}
+                    onDragStart={onTaskDragStart}
+                    onDragEnd={onTaskDragEnd}
                   />
                 ))}
               </div>
@@ -258,16 +264,19 @@ export default function DayColumn({
   );
 }
 
-function TaskItem({ reminder, onToggle, onDelete, onMoveLeft, onMoveRight }) {
+function TaskItem({ reminder, onToggle, onDelete, onMoveLeft, onMoveRight, onDragStart, onDragEnd }) {
   const handleDragStart = useCallback((e) => {
     e.dataTransfer.setData('text/plain', reminder.uid);
     e.dataTransfer.effectAllowed = 'move';
     e.currentTarget.style.opacity = '0.4';
-  }, [reminder.uid]);
+    // Notify App so it can show calendar overlay after a delay
+    if (onDragStart) onDragStart(reminder.uid, reminder.title);
+  }, [reminder.uid, reminder.title, onDragStart]);
 
   const handleDragEnd = useCallback((e) => {
     e.currentTarget.style.opacity = '1';
-  }, []);
+    if (onDragEnd) onDragEnd();
+  }, [onDragEnd]);
 
   return (
     <div
