@@ -66,50 +66,11 @@ export async function fetchAllTasks(refreshToken, startDate, endDate) {
   const lists = await fetchTaskLists(refreshToken);
 
   const allTasks = [];
+  const seenIds = new Set();
 
   for (const list of lists) {
-    let pageToken = null;
-    do {
-      const params = {
-        tasklist: list.id,
-        maxResults: 100,
-        showCompleted: true,
-        showHidden: false,
-        pageToken,
-      };
-
-      if (startDate) {
-        params.dueMin = new Date(startDate + 'T00:00:00Z').toISOString();
-      }
-      if (endDate) {
-        params.dueMax = new Date(endDate + 'T23:59:59Z').toISOString();
-      }
-
-      const res = await client.tasks.list(params);
-      const items = res.data.items || [];
-
-      for (const task of items) {
-        if (!task.title) continue;
-        allTasks.push({
-          uid: task.id,
-          title: task.title,
-          due_date: task.due ? task.due.split('T')[0] : null,
-          completed: task.status === 'completed',
-          completed_at: task.completed || null,
-          priority: 0,
-          calendar_name: list.title,
-          notes: task.notes || null,
-          _tasklistId: list.id,
-        });
-      }
-
-      pageToken = res.data.nextPageToken;
-    } while (pageToken);
-  }
-
-  // Also fetch tasks with no due date (not returned by dueMin/dueMax filters)
-  if (startDate || endDate) {
-    for (const list of lists) {
+    // First: fetch tasks with due dates in range
+    if (startDate && endDate) {
       let pageToken = null;
       do {
         const res = await client.tasks.list({
@@ -117,30 +78,54 @@ export async function fetchAllTasks(refreshToken, startDate, endDate) {
           maxResults: 100,
           showCompleted: true,
           showHidden: false,
+          dueMin: new Date(startDate + 'T00:00:00Z').toISOString(),
+          dueMax: new Date(endDate + 'T23:59:59Z').toISOString(),
           pageToken,
         });
-        const items = res.data.items || [];
-        for (const task of items) {
-          if (!task.title || task.due) continue;
-          if (allTasks.some((t) => t.uid === task.id)) continue;
-          allTasks.push({
-            uid: task.id,
-            title: task.title,
-            due_date: null,
-            completed: task.status === 'completed',
-            completed_at: task.completed || null,
-            priority: 0,
-            calendar_name: list.title,
-            notes: task.notes || null,
-            _tasklistId: list.id,
-          });
+        for (const task of res.data.items || []) {
+          if (!task.title || seenIds.has(task.id)) continue;
+          seenIds.add(task.id);
+          allTasks.push(formatTask(task, list.title, list.id));
         }
         pageToken = res.data.nextPageToken;
       } while (pageToken);
     }
+
+    // Second: fetch ALL incomplete tasks (no date filter) — this catches
+    // tasks with no due date, overdue tasks, and tasks with only reminders
+    let pageToken = null;
+    do {
+      const res = await client.tasks.list({
+        tasklist: list.id,
+        maxResults: 100,
+        showCompleted: false,
+        showHidden: false,
+        pageToken,
+      });
+      for (const task of res.data.items || []) {
+        if (!task.title || seenIds.has(task.id)) continue;
+        seenIds.add(task.id);
+        allTasks.push(formatTask(task, list.title, list.id));
+      }
+      pageToken = res.data.nextPageToken;
+    } while (pageToken);
   }
 
   return allTasks;
+}
+
+function formatTask(task, listTitle, listId) {
+  return {
+    uid: task.id,
+    title: task.title,
+    due_date: task.due ? task.due.split('T')[0] : null,
+    completed: task.status === 'completed',
+    completed_at: task.completed || null,
+    priority: 0,
+    calendar_name: listTitle,
+    notes: task.notes || null,
+    _tasklistId: listId,
+  };
 }
 
 /**
