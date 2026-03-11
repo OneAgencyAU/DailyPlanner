@@ -147,28 +147,33 @@ export async function fetchAllReminders() {
 
   // Fetch calendars that support VTODO
   const calendars = await client.fetchCalendars();
+  console.log(`Found ${calendars.length} calendars:`, calendars.map((c) => ({ name: c.displayName, url: c.url, components: c.components })));
+
   const todoCalendars = calendars.filter(
     (cal) =>
       cal.components?.includes('VTODO') ||
-      cal.url?.includes('/tasks/') ||
-      // iCloud often puts reminders under specific paths
-      !cal.components?.includes('VEVENT')
+      cal.url?.includes('/tasks/')
   );
 
-  // If no VTODO-specific calendars found, try all
-  const calsToSearch = todoCalendars.length > 0 ? todoCalendars : calendars;
+  // If no VTODO-specific calendars found, try all non-VEVENT calendars, then fall back to all
+  let calsToSearch = todoCalendars;
+  if (calsToSearch.length === 0) {
+    calsToSearch = calendars.filter((cal) => !cal.components || !cal.components.includes('VEVENT'));
+  }
+  if (calsToSearch.length === 0) {
+    calsToSearch = calendars;
+  }
+
+  console.log(`Searching ${calsToSearch.length} calendars for VTODOs:`, calsToSearch.map((c) => c.displayName));
 
   const allReminders = [];
 
   for (const cal of calsToSearch) {
     try {
-      // Use calendarQuery with VTODO comp-filter (fetchCalendarObjects defaults to VEVENT)
-      const responses = await client.calendarQuery({
-        url: cal.url,
-        props: {
-          [`${DAVNamespaceShort.DAV}:getetag`]: {},
-          [`${DAVNamespaceShort.CALDAV}:calendar-data`]: {},
-        },
+      // Use fetchCalendarObjects with VTODO filter — tsdav's higher-level API
+      // handles response parsing across different server implementations
+      const objects = await client.fetchCalendarObjects({
+        calendar: cal,
         filters: {
           [`${DAVNamespaceShort.CALDAV}:comp-filter`]: {
             _attributes: { name: 'VCALENDAR' },
@@ -177,13 +182,15 @@ export async function fetchAllReminders() {
             },
           },
         },
-        depth: '1',
       });
 
-      for (const resp of responses) {
-        const data = resp.props?.calendarData?._cdata || resp.props?.calendarData;
-        const etag = resp.props?.getetag;
-        const url = resp.href;
+      console.log(`Calendar "${cal.displayName}": ${objects.length} VTODO objects found`);
+
+      for (const obj of objects) {
+        // fetchCalendarObjects returns objects with .data, .etag, .url
+        const data = obj.data;
+        const etag = obj.etag;
+        const url = obj.url;
         if (!data || !data.includes('VTODO')) continue;
 
         const calName = cal.displayName || 'Reminders';
@@ -200,6 +207,7 @@ export async function fetchAllReminders() {
     }
   }
 
+  console.log(`Total reminders parsed: ${allReminders.length}`);
   return allReminders;
 }
 

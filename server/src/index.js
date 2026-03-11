@@ -340,6 +340,39 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`Server running on port ${PORT}`);
+
+  // Auto-sync reminders on startup if credentials are configured
+  if (process.env.APPLE_CALDAV_USERNAME && process.env.APPLE_CALDAV_APP_PASSWORD) {
+    try {
+      console.log('Auto-syncing reminders on startup...');
+      const reminders = await fetchAllReminders();
+      console.log(`Startup sync: fetched ${reminders.length} reminders from iCloud`);
+
+      if (reminders.length > 0) {
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query('DELETE FROM reminders');
+          for (const r of reminders) {
+            await client.query(
+              `INSERT INTO reminders (uid, etag, calendar_name, title, due_date, completed, completed_at, priority, raw_vcal, url, synced_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+              [r.uid, r.etag, r.calendarName, r.title, r.dueDate, r.completed, r.completedAt, r.priority, r.rawVcal, r.url]
+            );
+          }
+          await client.query('COMMIT');
+          console.log(`Startup sync: stored ${reminders.length} reminders in database`);
+        } catch (dbErr) {
+          await client.query('ROLLBACK');
+          console.error('Startup sync DB error:', dbErr);
+        } finally {
+          client.release();
+        }
+      }
+    } catch (err) {
+      console.error('Startup sync failed:', err.message);
+    }
+  }
 });
