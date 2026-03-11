@@ -20,6 +20,7 @@ export default function DayColumn({
 }) {
   const textareaRef = useRef(null);
   const [newTask, setNewTask] = useState('');
+  const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
     if (isExpanded && textareaRef.current) {
@@ -53,6 +54,29 @@ export default function DayColumn({
   const prevDateKey = dayIndex > 0 ? formatDate(weekDates[dayIndex - 1]) : null;
   const nextDateKey = dayIndex < weekDates.length - 1 ? formatDate(weekDates[dayIndex + 1]) : null;
 
+  // Drag-and-drop handlers for the column (drop target)
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    setDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    // Only clear if we're leaving the column entirely, not entering a child
+    if (!e.currentTarget.contains(e.relatedTarget)) {
+      setDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const uid = e.dataTransfer.getData('text/plain');
+    if (uid) {
+      onMoveReminder(uid, dateKey);
+    }
+  }, [dateKey, onMoveReminder]);
+
   const themeColor = theme.color;
 
   // Sort: incomplete first, then completed; overdue at top
@@ -68,19 +92,28 @@ export default function DayColumn({
   return (
     <div
       onClick={() => onToggle()}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       className={`
         relative flex flex-col rounded-xl border cursor-pointer
         transition-all duration-300 ease-in-out overflow-hidden
         ${isExpanded ? 'flex-[2.5]' : 'flex-1'}
+        ${dragOver ? 'border-accent-blue/60 bg-accent-blue/5 ring-1 ring-accent-blue/30' : ''}
         ${
-          isToday
+          !dragOver && isToday
             ? 'border-[var(--color-accent-orange)]/40 bg-bg-card-active shadow-[0_0_20px_rgba(245,101,54,0.08)]'
-            : 'border-border bg-bg-card hover:bg-bg-card-hover hover:border-border-bright'
+            : !dragOver
+              ? 'border-border bg-bg-card hover:bg-bg-card-hover hover:border-border-bright'
+              : ''
         }
       `}
     >
-      {isToday && (
+      {isToday && !dragOver && (
         <div className="absolute top-0 left-0 right-0 h-[2px] today-badge" />
+      )}
+      {dragOver && (
+        <div className="absolute top-0 left-0 right-0 h-[2px] bg-accent-blue" />
       )}
 
       <div className="p-5 flex flex-col h-full">
@@ -224,9 +257,23 @@ export default function DayColumn({
 }
 
 function TaskItem({ reminder, onToggle, onMoveLeft, onMoveRight }) {
+  const handleDragStart = useCallback((e) => {
+    e.dataTransfer.setData('text/plain', reminder.uid);
+    e.dataTransfer.effectAllowed = 'move';
+    // Add a slight delay so the drag ghost looks right
+    e.currentTarget.style.opacity = '0.4';
+  }, [reminder.uid]);
+
+  const handleDragEnd = useCallback((e) => {
+    e.currentTarget.style.opacity = '1';
+  }, []);
+
   return (
     <div
-      className={`flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-bg-primary/50 group ${
+      draggable
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      className={`flex items-start gap-2 px-2 py-1.5 rounded-md hover:bg-bg-primary/50 group cursor-grab active:cursor-grabbing ${
         reminder.overdue ? 'bg-amber-500/5' : ''
       }`}
     >
